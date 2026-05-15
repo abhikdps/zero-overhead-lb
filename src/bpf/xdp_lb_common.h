@@ -4,6 +4,7 @@
 #define MAX_BACKENDS     64
 #define MAX_VIPS         32
 #define MAX_CONNECTIONS  65536
+#define CFG_IDX          0
 
 struct vip_key {
 	__be32 address;
@@ -37,6 +38,11 @@ struct conn_key {
 
 struct conn_val {
 	__u32 backend_idx;
+};
+
+struct lb_config {
+	__u8 lb_mac[6];
+	__u8 pad[2];
 };
 
 #endif
