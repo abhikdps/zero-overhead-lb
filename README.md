@@ -55,7 +55,10 @@ Packets are parsed, rewritten, and forwarded before `sk_buff` allocation, interr
 │   └── teardown_testbed.sh      # Clean up test environment
 ├── config/
 │   └── example.json             # Sample configuration
-├── tests/                       # Functional and performance tests
+├── tests/
+│   ├── conftest.py              # Pytest fixtures: namespace helpers, packet capture
+│   ├── test_lb.py               # Functional tests (scapy-based)
+│   └── bench_pps.sh             # Performance benchmark (hping3 flood)
 ├── docs/                        # Architecture and testing docs
 └── Makefile
 ```
@@ -92,6 +95,8 @@ sudo apt install clang llvm libbpf-dev linux-tools-common \
 ```bash
 make            # build everything
 make clean      # remove build artifacts
+make test       # run functional tests (requires testbed + LB)
+make bench      # run performance benchmark
 make help       # list all targets
 ```
 
@@ -198,6 +203,50 @@ sudo bpftool map dump name stats
 You should see packets arriving at the backend with rewritten destination IP and MAC, valid checksums (backend kernel responds with SYN-ACK), and stats counters incrementing.
 
 > **Note**: Use `nsenter --net=/var/run/netns/<ns>` instead of `ip netns exec` when running `zlb start` inside a namespace. This enters only the network namespace while keeping the root mount namespace, so BPF map pinning to `/sys/fs/bpf/zlb/` works correctly and `zlb stats`/`zlb status` can access the maps from outside.
+
+### Functional Tests
+
+The test suite uses [scapy](https://scapy.net/) and [pytest](https://pytest.org/) to send crafted packets through the load balancer and verify correct behavior.
+
+```bash
+# Install test dependencies
+sudo apt install python3-pytest python3-scapy hping3
+
+# Set up testbed and attach the LB
+sudo scripts/setup_testbed.sh
+sudo nsenter --net=/var/run/netns/lb-ns build/zlb start \
+    -i veth-lb-ns -c config/example.json &
+
+# Run all functional tests
+sudo pytest tests/test_lb.py -v
+```
+
+Tests cover:
+
+| Test | What it verifies |
+|------|------------------|
+| TCP SYN to VIP | Packet arrives at backend with rewritten MAC/IP, valid checksums |
+| UDP to VIP | Same as above for UDP, including checksum handling |
+| Connection affinity | Same source IP:port always reaches the same backend |
+| Source distribution | Different source IPs are spread across backends |
+| Non-VIP passthrough | Traffic to the LB's own IP bypasses XDP (kernel handles it) |
+| ICMP passthrough | Ping to VIP works (ICMP is non-TCP/UDP, passed to kernel) |
+| ARP passthrough | ARP resolution works through the XDP program |
+| Stats increment | Per-backend packet counters update correctly |
+
+Some XDP code paths (truncated headers, VLAN tags) cannot be tested in generic/SKB mode because the kernel validates packets before XDP processes them. These tests are documented as skipped.
+
+### Performance Benchmark
+
+```bash
+# Run a 10-second hping3 flood through the LB and measure PPS
+sudo bash tests/bench_pps.sh 10
+
+# Or via make (default 10 seconds, override with BENCH_DURATION)
+make bench BENCH_DURATION=30
+```
+
+The benchmark uses `hping3 --flood` to generate TCP SYN traffic, reads per-backend stats from the pinned BPF maps before and after, and reports packets per second, throughput, and per-backend distribution.
 
 ## How It Works
 
