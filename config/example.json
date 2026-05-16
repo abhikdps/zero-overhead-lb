@@ -1,0 +1,16 @@
+{
+  "interface": "veth-lb-ns",
+  "vip": {
+    "address": "10.0.0.100",
+    "port": 80,
+    "protocol": "tcp"
+  },
+  "backends": [
+    { "address": "10.0.0.2", "port": 80, "mac": "fe:a2:4d:0f:5b:8d" },
+    { "address": "10.0.0.3", "port": 80, "mac": "0a:40:4a:af:c3:4d" }
+  ],
+  "health": {
+    "interval": 5,
+    "timeout": 2000
+  }
+}

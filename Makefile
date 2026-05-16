@@ -9,14 +9,15 @@ BPF_SRC   := src/bpf/xdp_lb_kern.c
 BPF_OBJ   := $(BUILD_DIR)/xdp_lb_kern.o
 BPF_SKEL  := $(BUILD_DIR)/xdp_lb_kern.skel.h
 VMLINUX   := src/bpf/vmlinux.h
-USR_SRCS  := $(wildcard src/user/*.c)
+USR_SRCS  := $(wildcard src/user/*.c) src/vendor/cJSON.c
 TARGET    := $(BUILD_DIR)/zlb
 
 BPF_CFLAGS := -O2 -g -target bpf -D__TARGET_ARCH_$(ARCH) \
               -Wall -Werror -I src/bpf
 
-USR_CFLAGS  := -O2 -g -Wall -Werror -I $(BUILD_DIR) -I src/bpf
-USR_LDFLAGS := -lbpf -lelf -lz
+USR_CFLAGS  := -O2 -g -Wall -Werror -I $(BUILD_DIR) -I src/bpf -I src/vendor \
+               -I src/user
+USR_LDFLAGS := -lbpf -lelf -lz -lpthread
 
 .PHONY: all clean vmlinux help
 
