@@ -19,7 +19,7 @@ USR_CFLAGS  := -O2 -g -Wall -Werror -I $(BUILD_DIR) -I src/bpf -I src/vendor \
                -I src/user
 USR_LDFLAGS := -lbpf -lelf -lz -lpthread
 
-.PHONY: all clean vmlinux help
+.PHONY: all clean vmlinux test bench help
 
 all: $(TARGET)
 
@@ -44,6 +44,14 @@ $(TARGET): $(USR_SRCS) $(BPF_SKEL) src/bpf/xdp_lb_common.h | $(BUILD_DIR)
 
 vmlinux: $(VMLINUX)
 
+test: $(TARGET)
+	@echo "Prerequisites: sudo scripts/setup_testbed.sh && LB attached"
+	sudo pytest tests/test_lb.py -v --tb=short
+
+bench: $(TARGET)
+	@echo "Prerequisites: sudo scripts/setup_testbed.sh && LB attached"
+	sudo bash tests/bench_pps.sh $(or $(BENCH_DURATION),10)
+
 clean:
 	rm -rf $(BUILD_DIR)
 	rm -f $(VMLINUX)
@@ -53,4 +61,6 @@ help:
 	@echo "  all      Build everything (default)"
 	@echo "  vmlinux  Generate vmlinux.h from kernel BTF"
 	@echo "  clean    Remove build artifacts"
+	@echo "  test     Run functional tests (requires testbed + LB attached)"
+	@echo "  bench    Run performance benchmark (BENCH_DURATION=N for seconds)"
 	@echo "  help     Show this message"
