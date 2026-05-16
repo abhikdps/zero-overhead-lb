@@ -32,7 +32,7 @@ Packets are parsed, rewritten, and forwarded before `sk_buff` allocation, interr
 
 **Data plane** (kernel, XDP/eBPF): Parses raw Ethernet frames (with VLAN support), matches destination IP:port against a virtual IP table, checks the connection table for session affinity or hashes the source IP for consistent backend selection, rewrites L2/L3 headers, incrementally recalculates IP and L4 checksums, and transmits via `XDP_TX` — all in a single pass, before the packet reaches the kernel networking stack.
 
-**Control plane** (userspace): Manages the BPF program lifecycle, populates VIP and backend maps from CLI arguments, and exposes per-backend statistics via BPF maps.
+**Control plane** (userspace): Manages the BPF program lifecycle, loads VIP and backend configuration from JSON config files or CLI arguments, runs TCP health checks with automatic failover, pins BPF maps for cross-process access, and provides live per-backend statistics.
 
 ## Project Structure
 
@@ -43,12 +43,18 @@ Packets are parsed, rewritten, and forwarded before `sk_buff` allocation, interr
 │   │   ├── xdp_lb_common.h     # Shared structs (BPF ↔ userspace)
 │   │   ├── xdp_pass.c          # Reference: minimal pass-through
 │   │   └── xdp_parse.c         # Reference: packet parser prototype
-│   └── user/
-│       └── main.c              # CLI: load, attach, configure, detach
+│   ├── user/
+│   │   ├── main.c              # CLI: start, stop, stats, status
+│   │   ├── config.c / .h       # JSON config parsing (cJSON)
+│   │   ├── stats.c / .h        # Per-CPU stats aggregation + display
+│   │   └── health.c / .h       # TCP health checks (pthread)
+│   └── vendor/
+│       └── cJSON.c / .h        # Vendored JSON parser (MIT)
 ├── scripts/
 │   ├── setup_testbed.sh         # Create bridge + namespace test environment
 │   └── teardown_testbed.sh      # Clean up test environment
-├── config/                      # Sample configurations
+├── config/
+│   └── example.json             # Sample configuration
 ├── tests/                       # Functional and performance tests
 ├── docs/                        # Architecture and testing docs
 └── Makefile
@@ -99,23 +105,52 @@ Output: `build/zlb`
 
 ## Usage
 
+### Start with a config file
+
 ```bash
-# Attach with a VIP and backends
+sudo build/zlb start -i eth0 -c config/example.json
+```
+
+Sample `config/example.json`:
+```json
+{
+  "interface": "eth0",
+  "vip": { "address": "10.0.0.100", "port": 80, "protocol": "tcp" },
+  "backends": [
+    { "address": "10.0.0.2", "port": 80, "mac": "aa:bb:cc:dd:ee:01" },
+    { "address": "10.0.0.3", "port": 80, "mac": "aa:bb:cc:dd:ee:02" }
+  ],
+  "health": { "interval": 5, "timeout": 2000 }
+}
+```
+
+### Start with CLI flags
+
+```bash
 sudo build/zlb start -i eth0 \
     -v 10.0.0.100:80:tcp \
     -b 10.0.0.2:80:aa:bb:cc:dd:ee:01 \
     -b 10.0.0.3:80:aa:bb:cc:dd:ee:02
-
-# Detach from an interface
-sudo build/zlb stop -i eth0
 ```
 
-**Flags:**
-- `-i <interface>` — network interface to attach XDP program to
-- `-v <ip>:<port>:<tcp|udp>` — virtual IP address to load-balance
-- `-b <ip>:<port>:<mac>` — backend server (repeat for multiple backends)
+### Other commands
 
-The program attaches in SKB (generic) mode by default. Non-VIP traffic passes through to the kernel stack unmodified.
+```bash
+sudo build/zlb stats        # show per-backend packet/byte counters
+sudo build/zlb stats -w     # live watch mode (updates every second with PPS)
+sudo build/zlb status       # show pinned map status
+sudo build/zlb stop -i eth0 # detach XDP program
+```
+
+The program attaches in SKB (generic) mode by default. Non-VIP traffic passes through to the kernel stack unmodified. BPF maps are pinned to `/sys/fs/bpf/zlb/` for cross-process access.
+
+### Health checking
+
+When started with a config file, TCP health checks run automatically in a background thread:
+- Connects to each backend's `address:port` every `interval` seconds
+- 3 consecutive failures → backend marked **DOWN**, traffic shifted to healthy backends
+- 2 consecutive successes → backend marked **UP**, traffic restored
+- On shutdown, original backend configuration is restored
 
 ## Testing
 
@@ -149,11 +184,9 @@ sudo scripts/teardown_testbed.sh
 # In one terminal — start tcpdump on a backend
 sudo ip netns exec be1-ns tcpdump -i veth-be1-ns -nn tcp
 
-# In another — attach the LB inside lb-ns
-sudo ip netns exec lb-ns build/zlb start -i veth-lb-ns \
-    -v 10.0.0.100:80:tcp \
-    -b 10.0.0.2:80:<be1-mac> \
-    -b 10.0.0.3:80:<be2-mac>
+# In another — attach the LB (use nsenter to keep bpffs accessible)
+sudo nsenter --net=/var/run/netns/lb-ns build/zlb start \
+    -i veth-lb-ns -c config/example.json
 
 # In another — send traffic from client
 sudo ip netns exec client-ns hping3 -S -p 80 10.0.0.100 -c 3
@@ -163,6 +196,8 @@ sudo bpftool map dump name stats
 ```
 
 You should see packets arriving at the backend with rewritten destination IP and MAC, valid checksums (backend kernel responds with SYN-ACK), and stats counters incrementing.
+
+> **Note**: Use `nsenter --net=/var/run/netns/<ns>` instead of `ip netns exec` when running `zlb start` inside a namespace. This enters only the network namespace while keeping the root mount namespace, so BPF map pinning to `/sys/fs/bpf/zlb/` works correctly and `zlb stats`/`zlb status` can access the maps from outside.
 
 ## How It Works
 
