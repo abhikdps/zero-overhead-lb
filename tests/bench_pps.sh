@@ -40,9 +40,18 @@ total_pkts = 0
 total_bytes = 0
 per_be = {}
 for e in entries:
-    idx = e['key']
-    pkts = sum(v['value']['packets'] for v in e['values'])
-    byts = sum(v['value']['bytes'] for v in e['values'])
+    f = e.get('formatted', e)
+    idx = f.get('key', e.get('key', 0))
+    if isinstance(idx, list):
+        idx = int.from_bytes(bytes(int(x, 16) for x in idx), 'little')
+    vals = f.get('values', e.get('values', []))
+    pkts = 0
+    byts = 0
+    for v in vals:
+        vv = v.get('value', {})
+        if isinstance(vv, dict):
+            pkts += vv.get('packets', 0)
+            byts += vv.get('bytes', 0)
     if pkts > 0:
         per_be[idx] = {'packets': pkts, 'bytes': byts}
     total_pkts += pkts
@@ -140,18 +149,31 @@ except Exception:
 
 be_ips = {}
 for b in backends:
-    idx = b.get('key', 0)
-    val = b.get('value', {})
-    addr = val.get('address', 0)
-    port = val.get('port', 0)
-    if addr != 0:
-        ip = socket.inet_ntoa(struct.pack('!I', addr))
-        be_ips[str(idx)] = f'{ip}:{socket.ntohs(port)}'
+    f = b.get('formatted', b)
+    idx = f.get('key', b.get('key', 0))
+    if isinstance(idx, list):
+        idx = int.from_bytes(bytes(int(x, 16) for x in idx), 'little')
+    val = f.get('value', b.get('value', {}))
+    if isinstance(val, dict):
+        addr = val.get('address', 0)
+        port = val.get('port', 0)
+        if addr != 0:
+            ip = socket.inet_ntoa(struct.pack('<I', addr))
+            real_port = struct.unpack('<H', struct.pack('>H', port))[0]
+            be_ips[str(idx)] = f'{ip}:{real_port}'
 
-total = sum(v['packets'] for v in per_be.values())
-for idx, stats in sorted(per_be.items(), key=lambda x: int(x[0])):
-    ip_str = be_ips.get(str(idx), f'backend-{idx}')
+# Deduplicate slots into physical backends
+phys = {}
+for idx_str, stats in per_be.items():
+    label = be_ips.get(str(idx_str), f'backend-{idx_str}')
+    if label not in phys:
+        phys[label] = {'packets': 0, 'bytes': 0}
+    phys[label]['packets'] += stats['packets']
+    phys[label]['bytes'] += stats['bytes']
+
+total = sum(v['packets'] for v in phys.values())
+for label, stats in sorted(phys.items()):
     pkts = stats['packets']
     pct = (pkts / total * 100) if total > 0 else 0
-    print(f'  {ip_str:22s}  {pkts:>12,} pkts  ({pct:.1f}%)')
+    print(f'  {label:22s}  {pkts:>12,} pkts  ({pct:.1f}%)')
 "

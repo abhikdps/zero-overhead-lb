@@ -198,10 +198,20 @@ def read_stats():
     entries = json.loads(result.stdout)
     stats = {}
     for entry in entries:
-        idx = entry["key"]
-        values = entry["values"]
-        total_pkts = sum(v["value"]["packets"] for v in values)
-        total_bytes = sum(v["value"]["bytes"] for v in values)
+        fmt = entry.get("formatted", entry)
+        idx = fmt.get("key", entry.get("key", 0))
+        if isinstance(idx, list):
+            idx = int.from_bytes(
+                bytes(int(x, 16) for x in idx), "little"
+            )
+        values = fmt.get("values", entry.get("values", []))
+        total_pkts = 0
+        total_bytes = 0
+        for v in values:
+            vv = v.get("value", {})
+            if isinstance(vv, dict):
+                total_pkts += vv.get("packets", 0)
+                total_bytes += vv.get("bytes", 0)
         if total_pkts > 0 or total_bytes > 0:
             stats[idx] = {"packets": total_pkts, "bytes": total_bytes}
     return stats
