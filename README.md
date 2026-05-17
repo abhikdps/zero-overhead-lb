@@ -6,7 +6,7 @@ Packets are parsed, rewritten, and forwarded before `sk_buff` allocation, interr
 
 ## Architecture
 
-```
+```text
               Incoming packet
                     │
                     ▼
@@ -18,10 +18,10 @@ Packets are parsed, rewritten, and forwarded before `sk_buff` allocation, interr
         │  Own-IP check         │──── own  ──── XDP_PASS ──► kernel stack
         │  Lookup VIP table     │──── miss ──── XDP_PASS ──► kernel stack
         │  Check conn table     │
-        │  Hash src IP          │            ┌─────────────┐
+        │  Hash src IP          │            ┌──────────────┐
         │  Select backend       │            │ Ring buffer  │
         │  Rewrite MAC + IP     │──events──► │ (events map) │
-        │  Recalculate checksum │            └──────┬──────┘
+        │  Recalculate checksum │            └──────┬───────┘
         │  XDP_TX / REDIRECT    │                   │
         └───────────┬───────────┘              zlb events
                     │
@@ -39,7 +39,7 @@ Packets are parsed, rewritten, and forwarded before `sk_buff` allocation, interr
 
 ## Project Structure
 
-```
+```text
 ├── src/
 │   ├── bpf/
 │   │   ├── xdp_lb_kern.c       # XDP load balancer (data plane)
@@ -70,7 +70,7 @@ Packets are parsed, rewritten, and forwarded before `sk_buff` allocation, interr
 ## BPF Maps
 
 | Map | Type | Key → Value | Purpose |
-|-----|------|-------------|---------|
+| ----- | ------ | ------------- | --------- |
 | `vip_table` | Hash | `{ip, port, proto}` → `{backend_count, start_idx}` | Identify virtual IPs to load-balance |
 | `backends` | Array (256) | index → `{ip, port, mac}` | Backend server pool (weight-expanded) |
 | `connection_table` | LRU Hash (262K) | `{src_ip, src_port, proto}` → `{backend_idx}` | Session affinity (sticky connections) |
@@ -108,6 +108,7 @@ make help       # list all targets
 ```
 
 The build pipeline:
+
 1. Generates `vmlinux.h` from kernel BTF (CO-RE portability)
 2. Compiles BPF C → BPF ELF object with clang
 3. Generates a BPF skeleton header with bpftool
@@ -124,6 +125,7 @@ sudo build/zlb start -i eth0 -c config/example.json
 ```
 
 Sample `config/example.json`:
+
 ```json
 {
   "interface": "eth0",
@@ -168,7 +170,7 @@ The program attaches in SKB (generic) mode by default. Non-VIP traffic passes th
 
 `zlb events` consumes the BPF ring buffer and prints structured events in real time:
 
-```
+```text
 FORWARD tcp 10.0.0.10:41234 -> 10.0.0.100:80 backend=0
 CONN_NEW tcp 10.0.0.10:41235 -> 10.0.0.100:80 backend=1
 PASS [fragment] 10.0.0.10 -> 10.0.0.100
@@ -176,6 +178,7 @@ PASS [lb-own-ip] tcp 10.0.0.10:22 -> 10.0.0.1:22
 ```
 
 Event types:
+
 - **FORWARD**: Packet forwarded to a backend (sampled — every 1000th packet to avoid ring buffer saturation)
 - **PASS**: Packet passed to the kernel stack, with a reason (not-ipv4, not-tcp/udp, vip-miss, no-backends, lb-own-ip, fragment, backend-miss)
 - **CONN_NEW**: New connection mapping created in the affinity table
@@ -191,6 +194,7 @@ Health checks run in the `zlb start` process and are not affected by reload. Res
 ### Health checking
 
 When started with a config file, TCP health checks run automatically in a background thread:
+
 - Connects to each backend's `address:port` every `interval` seconds
 - 3 consecutive failures → backend marked **DOWN**, traffic shifted to healthy backends
 - 2 consecutive successes → backend marked **UP**, traffic restored
@@ -213,7 +217,7 @@ sudo scripts/teardown_testbed.sh
 
 ### Testbed Topology
 
-```
+```text
 ┌──────────────┐    ┌──────────────┐    ┌──────────────┐    ┌──────────────┐
 │  client-ns   │    │    lb-ns     │    │   be1-ns     │    │   be2-ns     │
 │  10.0.0.10   │    │  10.0.0.1    │    │  10.0.0.2    │    │  10.0.0.3    │
@@ -264,7 +268,7 @@ sudo pytest tests/test_lb.py -v
 Tests cover:
 
 | Test | What it verifies |
-|------|------------------|
+| ------ | ------------------ |
 | TCP SYN to VIP | Packet arrives at backend with rewritten MAC/IP, valid checksums |
 | UDP to VIP | Same as above for UDP, including checksum handling |
 | Connection affinity | Same source IP:port always reaches the same backend |
