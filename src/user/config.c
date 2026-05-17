@@ -36,7 +36,7 @@ struct lb_cfg *config_load(const char *path)
 	free(buf);
 	if (!root) {
 		fprintf(stderr, "JSON parse error: %s\n",
-			cJSON_GetErrorPtr() ? cJSON_GetErrorPtr() : "unknown");
+		        cJSON_GetErrorPtr() ? cJSON_GetErrorPtr() : "unknown");
 		return NULL;
 	}
 
@@ -47,12 +47,12 @@ struct lb_cfg *config_load(const char *path)
 	}
 
 	cfg->health_interval = 5;
-	cfg->health_timeout  = 2000;
+	cfg->health_timeout = 2000;
 
 	cJSON *iface = cJSON_GetObjectItem(root, "interface");
 	if (cJSON_IsString(iface))
 		snprintf(cfg->interface, sizeof(cfg->interface), "%s",
-			 iface->valuestring);
+		         iface->valuestring);
 
 	cJSON *vip = cJSON_GetObjectItem(root, "vip");
 	if (vip) {
@@ -62,7 +62,7 @@ struct lb_cfg *config_load(const char *path)
 
 		if (cJSON_IsString(addr))
 			snprintf(cfg->vip_ip, sizeof(cfg->vip_ip), "%s",
-				 addr->valuestring);
+			         addr->valuestring);
 		if (cJSON_IsNumber(port))
 			cfg->vip_port = port->valueint;
 		if (cJSON_IsString(proto)) {
@@ -76,28 +76,31 @@ struct lb_cfg *config_load(const char *path)
 	cJSON *backends = cJSON_GetObjectItem(root, "backends");
 	if (cJSON_IsArray(backends)) {
 		cJSON *be;
-		cJSON_ArrayForEach(be, backends) {
+		cJSON_ArrayForEach(be, backends)
+		{
 			if (cfg->backend_count >= MAX_CFG_BACKENDS)
 				break;
 
-			struct backend_cfg *b = &cfg->backends[cfg->backend_count];
+			struct backend_cfg *b =
+			    &cfg->backends[cfg->backend_count];
 			cJSON *addr = cJSON_GetObjectItem(be, "address");
 			cJSON *port = cJSON_GetObjectItem(be, "port");
-			cJSON *mac  = cJSON_GetObjectItem(be, "mac");
+			cJSON *mac = cJSON_GetObjectItem(be, "mac");
 
 			if (cJSON_IsString(addr))
 				snprintf(b->ip, sizeof(b->ip), "%s",
-					 addr->valuestring);
+				         addr->valuestring);
 			if (cJSON_IsNumber(port))
 				b->port = port->valueint;
 			if (cJSON_IsString(mac))
 				snprintf(b->mac_str, sizeof(b->mac_str), "%s",
-					 mac->valuestring);
+				         mac->valuestring);
 
 			cJSON *weight = cJSON_GetObjectItem(be, "weight");
-			b->weight = (cJSON_IsNumber(weight) &&
-				     weight->valueint > 0) ?
-				    weight->valueint : 1;
+			b->weight =
+			    (cJSON_IsNumber(weight) && weight->valueint > 0)
+			        ? weight->valueint
+			        : 1;
 
 			cfg->backend_count++;
 		}
@@ -106,7 +109,7 @@ struct lb_cfg *config_load(const char *path)
 	cJSON *health = cJSON_GetObjectItem(root, "health");
 	if (health) {
 		cJSON *interval = cJSON_GetObjectItem(health, "interval");
-		cJSON *timeout  = cJSON_GetObjectItem(health, "timeout");
+		cJSON *timeout = cJSON_GetObjectItem(health, "timeout");
 
 		if (cJSON_IsNumber(interval))
 			cfg->health_interval = interval->valueint;
@@ -117,13 +120,13 @@ struct lb_cfg *config_load(const char *path)
 	cJSON *redirect = cJSON_GetObjectItem(root, "redirect");
 	if (redirect) {
 		cJSON *enabled = cJSON_GetObjectItem(redirect, "enabled");
-		cJSON *egress  = cJSON_GetObjectItem(redirect, "egress_iface");
+		cJSON *egress = cJSON_GetObjectItem(redirect, "egress_iface");
 
 		if (cJSON_IsTrue(enabled))
 			cfg->redirect_enabled = 1;
 		if (cJSON_IsString(egress) && strlen(egress->valuestring) > 0)
 			snprintf(cfg->egress_iface, sizeof(cfg->egress_iface),
-				 "%s", egress->valuestring);
+			         "%s", egress->valuestring);
 	}
 
 	cJSON_Delete(root);
@@ -138,8 +141,8 @@ void config_free(struct lb_cfg *cfg)
 static int validate_mac(const char *str)
 {
 	unsigned int m[6];
-	if (sscanf(str, "%x:%x:%x:%x:%x:%x",
-		   &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) != 6)
+	if (sscanf(str, "%x:%x:%x:%x:%x:%x", &m[0], &m[1], &m[2], &m[3], &m[4],
+	           &m[5]) != 6)
 		return -1;
 	for (int i = 0; i < 6; i++) {
 		if (m[i] > 0xff)
@@ -161,13 +164,13 @@ int config_validate(struct lb_cfg *cfg)
 
 	if (inet_pton(AF_INET, cfg->vip_ip, &tmp) != 1) {
 		fprintf(stderr, "Error: invalid VIP address '%s'\n",
-			cfg->vip_ip);
+		        cfg->vip_ip);
 		return -1;
 	}
 
 	if (cfg->vip_port <= 0 || cfg->vip_port > 65535) {
 		fprintf(stderr, "Error: VIP port %d out of range [1-65535]\n",
-			cfg->vip_port);
+		        cfg->vip_port);
 		return -1;
 	}
 
@@ -182,38 +185,36 @@ int config_validate(struct lb_cfg *cfg)
 	}
 	if (cfg->backend_count > MAX_CFG_BACKENDS) {
 		fprintf(stderr, "Error: too many backends (max %d)\n",
-			MAX_CFG_BACKENDS);
+		        MAX_CFG_BACKENDS);
 		return -1;
 	}
 
 	int total_weight = 0;
 	for (int i = 0; i < cfg->backend_count; i++) {
 		if (inet_pton(AF_INET, cfg->backends[i].ip, &tmp) != 1) {
-			fprintf(stderr,
-				"Error: backend[%d] invalid IP '%s'\n",
-				i, cfg->backends[i].ip);
+			fprintf(stderr, "Error: backend[%d] invalid IP '%s'\n",
+			        i, cfg->backends[i].ip);
 			return -1;
 		}
 		if (cfg->backends[i].port <= 0 ||
 		    cfg->backends[i].port > 65535) {
 			fprintf(stderr,
-				"Error: backend[%d] port %d out of range\n",
-				i, cfg->backends[i].port);
+			        "Error: backend[%d] port %d out of range\n", i,
+			        cfg->backends[i].port);
 			return -1;
 		}
 		if (validate_mac(cfg->backends[i].mac_str) < 0) {
-			fprintf(stderr,
-				"Error: backend[%d] invalid MAC '%s'\n",
-				i, cfg->backends[i].mac_str);
+			fprintf(stderr, "Error: backend[%d] invalid MAC '%s'\n",
+			        i, cfg->backends[i].mac_str);
 			return -1;
 		}
 
-		int w = cfg->backends[i].weight > 0 ?
-			cfg->backends[i].weight : 1;
+		int w =
+		    cfg->backends[i].weight > 0 ? cfg->backends[i].weight : 1;
 		if (w > 10) {
 			fprintf(stderr,
-				"Error: backend[%d] weight %d exceeds max 10\n",
-				i, w);
+			        "Error: backend[%d] weight %d exceeds max 10\n",
+			        i, w);
 			return -1;
 		}
 		total_weight += w;
@@ -221,21 +222,21 @@ int config_validate(struct lb_cfg *cfg)
 
 	if (total_weight > MAX_BACKENDS) {
 		fprintf(stderr,
-			"Error: total weight %d exceeds MAX_BACKENDS (%d)\n",
-			total_weight, MAX_BACKENDS);
+		        "Error: total weight %d exceeds MAX_BACKENDS (%d)\n",
+		        total_weight, MAX_BACKENDS);
 		return -1;
 	}
 
 	if (cfg->health_interval < 1 || cfg->health_interval > 300) {
 		fprintf(stderr,
-			"Error: health interval %d out of range [1-300]\n",
-			cfg->health_interval);
+		        "Error: health interval %d out of range [1-300]\n",
+		        cfg->health_interval);
 		return -1;
 	}
 	if (cfg->health_timeout < 100 || cfg->health_timeout > 30000) {
 		fprintf(stderr,
-			"Error: health timeout %d out of range [100-30000]\n",
-			cfg->health_timeout);
+		        "Error: health timeout %d out of range [100-30000]\n",
+		        cfg->health_timeout);
 		return -1;
 	}
 

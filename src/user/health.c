@@ -12,9 +12,9 @@
 #include "health.h"
 
 struct backend_health {
-	int  consecutive_fail;
-	int  consecutive_ok;
-	int  healthy;
+	int consecutive_fail;
+	int consecutive_ok;
+	int healthy;
 };
 
 static int tcp_check(struct backend_info *be, int timeout_ms)
@@ -24,9 +24,9 @@ static int tcp_check(struct backend_info *be, int timeout_ms)
 		return -1;
 
 	struct sockaddr_in addr = {
-		.sin_family = AF_INET,
-		.sin_addr.s_addr = be->address,
-		.sin_port = be->port,
+	    .sin_family = AF_INET,
+	    .sin_addr.s_addr = be->address,
+	    .sin_port = be->port,
 	};
 
 	int ret = connect(fd, (struct sockaddr *)&addr, sizeof(addr));
@@ -40,7 +40,7 @@ static int tcp_check(struct backend_info *be, int timeout_ms)
 		return -1;
 	}
 
-	struct pollfd pfd = { .fd = fd, .events = POLLOUT };
+	struct pollfd pfd = {.fd = fd, .events = POLLOUT};
 	ret = poll(&pfd, 1, timeout_ms);
 
 	if (ret > 0 && (pfd.revents & POLLOUT)) {
@@ -56,7 +56,7 @@ static int tcp_check(struct backend_info *be, int timeout_ms)
 }
 
 static void update_slots(struct health_ctx *ctx, int phys_idx,
-			 struct backend_info *be)
+                         struct backend_info *be)
 {
 	for (int s = 0; s < ctx->slots[phys_idx].count; s++) {
 		__u32 key = ctx->slots[phys_idx].start + s;
@@ -84,14 +84,13 @@ static void *health_thread(void *arg)
 				bh[i].consecutive_fail = 0;
 				bh[i].consecutive_ok++;
 
-				if (!bh[i].healthy &&
-				    bh[i].consecutive_ok >= HEALTH_OK_THRESHOLD) {
+				if (!bh[i].healthy && bh[i].consecutive_ok >=
+				                          HEALTH_OK_THRESHOLD) {
 					bh[i].healthy = 1;
-					fprintf(stderr,
-						"[health] %s:%d UP\n",
-						ip, ntohs(be->port));
+					fprintf(stderr, "[health] %s:%d UP\n",
+					        ip, ntohs(be->port));
 					update_slots(ctx, i,
-						     &ctx->originals[i]);
+					             &ctx->originals[i]);
 				}
 			} else {
 				bh[i].consecutive_ok = 0;
@@ -99,15 +98,14 @@ static void *health_thread(void *arg)
 
 				if (bh[i].healthy &&
 				    bh[i].consecutive_fail >=
-					    HEALTH_FAIL_THRESHOLD) {
+				        HEALTH_FAIL_THRESHOLD) {
 					bh[i].healthy = 0;
-					fprintf(stderr,
-						"[health] %s:%d DOWN\n",
-						ip, ntohs(be->port));
+					fprintf(stderr, "[health] %s:%d DOWN\n",
+					        ip, ntohs(be->port));
 
 					int replace = -1;
-					for (int j = 0;
-					     j < ctx->nr_physical; j++) {
+					for (int j = 0; j < ctx->nr_physical;
+					     j++) {
 						if (j != i && bh[j].healthy) {
 							replace = j;
 							break;
@@ -115,8 +113,9 @@ static void *health_thread(void *arg)
 					}
 
 					if (replace >= 0)
-						update_slots(ctx, i,
-							     &ctx->originals[replace]);
+						update_slots(
+						    ctx, i,
+						    &ctx->originals[replace]);
 				}
 			}
 		}
@@ -133,7 +132,7 @@ int health_start(struct health_ctx *ctx)
 	for (int i = 0; i < ctx->nr_physical; i++) {
 		__u32 key = ctx->slots[i].start;
 		if (bpf_map_lookup_elem(ctx->backends_fd, &key,
-					&ctx->originals[i]) < 0) {
+		                        &ctx->originals[i]) < 0) {
 			fprintf(stderr, "Failed to read backend %d\n", i);
 			return -1;
 		}
@@ -145,9 +144,10 @@ int health_start(struct health_ctx *ctx)
 		return -1;
 	}
 
-	fprintf(stderr, "[health] started: interval=%ds timeout=%dms "
-		"backends=%d\n",
-		ctx->interval_sec, ctx->timeout_ms, ctx->nr_physical);
+	fprintf(stderr,
+	        "[health] started: interval=%ds timeout=%dms "
+	        "backends=%d\n",
+	        ctx->interval_sec, ctx->timeout_ms, ctx->nr_physical);
 	return 0;
 }
 

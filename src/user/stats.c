@@ -49,14 +49,14 @@ static void format_number(char *buf, size_t bufsz, __u64 n)
 }
 
 struct backend_display {
-	char     addr_str[24];
-	__u64    packets;
-	__u64    bytes;
-	__u64    prev_packets;
+	char addr_str[24];
+	__u64 packets;
+	__u64 bytes;
+	__u64 prev_packets;
 };
 
 static int find_display(struct backend_display *out, int count,
-		        const char *addr_str)
+                        const char *addr_str)
 {
 	for (int i = 0; i < count; i++) {
 		if (strcmp(out[i].addr_str, addr_str) == 0)
@@ -66,7 +66,7 @@ static int find_display(struct backend_display *out, int count,
 }
 
 static int read_stats(int stats_fd, int backends_fd, int nr_cpus,
-		      struct backend_display *out, int *out_count)
+                      struct backend_display *out, int *out_count)
 {
 	int count = *out_count;
 	size_t val_sz = nr_cpus * sizeof(struct lb_stats);
@@ -96,14 +96,14 @@ static int read_stats(int stats_fd, int backends_fd, int nr_cpus,
 		char ip[INET_ADDRSTRLEN];
 		inet_ntop(AF_INET, &be.address, ip, sizeof(ip));
 		char addr_str[24];
-		snprintf(addr_str, sizeof(addr_str), "%s:%d",
-			 ip, ntohs(be.port));
+		snprintf(addr_str, sizeof(addr_str), "%s:%d", ip,
+		         ntohs(be.port));
 
 		int idx = find_display(out, count, addr_str);
 		if (idx < 0) {
 			idx = count++;
 			snprintf(out[idx].addr_str, sizeof(out[idx].addr_str),
-				 "%s", addr_str);
+			         "%s", addr_str);
 			out[idx].packets = 0;
 			out[idx].bytes = 0;
 			out[idx].prev_packets = 0;
@@ -127,14 +127,13 @@ static int read_stats(int stats_fd, int backends_fd, int nr_cpus,
 }
 
 static void print_table(struct backend_display *backends, int count,
-			int show_pps)
+                        int show_pps)
 {
 	if (show_pps)
-		printf("%-22s %12s %10s %10s\n",
-		       "Backend", "Packets", "Bytes", "PPS");
+		printf("%-22s %12s %10s %10s\n", "Backend", "Packets", "Bytes",
+		       "PPS");
 	else
-		printf("%-22s %12s %10s\n",
-		       "Backend", "Packets", "Bytes");
+		printf("%-22s %12s %10s\n", "Backend", "Packets", "Bytes");
 
 	for (int i = 0; i < (show_pps ? 58 : 46); i++)
 		putchar('-');
@@ -146,16 +145,15 @@ static void print_table(struct backend_display *backends, int count,
 		format_bytes(bytes_str, sizeof(bytes_str), backends[i].bytes);
 
 		if (show_pps) {
-			__u64 pps = backends[i].packets -
-				    backends[i].prev_packets;
+			__u64 pps =
+			    backends[i].packets - backends[i].prev_packets;
 			char pps_str[16];
 			format_number(pps_str, sizeof(pps_str), pps);
-			printf("%-22s %12s %10s %10s\n",
-			       backends[i].addr_str, pkts_str, bytes_str,
-			       pps_str);
+			printf("%-22s %12s %10s %10s\n", backends[i].addr_str,
+			       pkts_str, bytes_str, pps_str);
 		} else {
-			printf("%-22s %12s %10s\n",
-			       backends[i].addr_str, pkts_str, bytes_str);
+			printf("%-22s %12s %10s\n", backends[i].addr_str,
+			       pkts_str, bytes_str);
 		}
 	}
 }
@@ -179,21 +177,21 @@ int cmd_stats(int argc, char **argv)
 
 	char stats_path[256], backends_path[256];
 	snprintf(stats_path, sizeof(stats_path), "%s/stats", PIN_BASE);
-	snprintf(backends_path, sizeof(backends_path), "%s/backends",
-		 PIN_BASE);
+	snprintf(backends_path, sizeof(backends_path), "%s/backends", PIN_BASE);
 
 	int stats_fd = bpf_obj_get(stats_path);
 	if (stats_fd < 0) {
 		fprintf(stderr,
-			"Cannot open pinned stats map at %s\n"
-			"Is the load balancer running?\n", stats_path);
+		        "Cannot open pinned stats map at %s\n"
+		        "Is the load balancer running?\n",
+		        stats_path);
 		return 1;
 	}
 
 	int backends_fd = bpf_obj_get(backends_path);
 	if (backends_fd < 0) {
 		fprintf(stderr, "Cannot open pinned backends map at %s\n",
-			backends_path);
+		        backends_path);
 		close(stats_fd);
 		return 1;
 	}
@@ -216,7 +214,7 @@ int cmd_stats(int argc, char **argv)
 			if (!stats_running)
 				break;
 			read_stats(stats_fd, backends_fd, nr_cpus, backends,
-				   &count);
+			           &count);
 			printf("\033[2J\033[H");
 			print_table(backends, count, 1);
 		}

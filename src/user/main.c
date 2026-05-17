@@ -20,7 +20,7 @@
 #include "events.h"
 
 #define MAX_BACKENDS_CLI 16
-#define PIN_BASE_DIR     "/sys/fs/bpf/zlb"
+#define PIN_BASE_DIR "/sys/fs/bpf/zlb"
 
 static volatile sig_atomic_t running = 1;
 
@@ -31,16 +31,16 @@ static void sig_handler(int sig)
 
 struct backend_arg {
 	char ip[INET_ADDRSTRLEN];
-	int  port;
+	int port;
 	char mac_str[18];
-	int  weight;
+	int weight;
 };
 
 static int parse_mac(const char *str, __u8 mac[6])
 {
 	unsigned int m[6];
-	if (sscanf(str, "%x:%x:%x:%x:%x:%x",
-		   &m[0], &m[1], &m[2], &m[3], &m[4], &m[5]) != 6)
+	if (sscanf(str, "%x:%x:%x:%x:%x:%x", &m[0], &m[1], &m[2], &m[3], &m[4],
+	           &m[5]) != 6)
 		return -1;
 	for (int i = 0; i < 6; i++)
 		mac[i] = (__u8)m[i];
@@ -87,11 +87,11 @@ static int get_iface_mac(const char *ifname, __u8 mac[6])
 }
 
 static int populate_maps(struct xdp_lb_kern *skel, const char *ifname,
-			 const char *vip_ip, int vip_port, __u8 protocol,
-			 struct backend_arg *be_args, int be_count,
-			 int redirect_enabled, const char *egress_iface)
+                         const char *vip_ip, int vip_port, __u8 protocol,
+                         struct backend_arg *be_args, int be_count,
+                         int redirect_enabled, const char *egress_iface)
 {
-	struct vip_key vkey = { .protocol = protocol };
+	struct vip_key vkey = {.protocol = protocol};
 	if (inet_pton(AF_INET, vip_ip, &vkey.address) != 1) {
 		fprintf(stderr, "Bad VIP IP: %s\n", vip_ip);
 		return -1;
@@ -105,8 +105,8 @@ static int populate_maps(struct xdp_lb_kern *skel, const char *ifname,
 	}
 
 	struct vip_meta vmeta = {
-		.backend_count     = total_weight,
-		.backend_start_idx = 0,
+	    .backend_count = total_weight,
+	    .backend_start_idx = 0,
 	};
 
 	int map_fd = bpf_map__fd(skel->maps.vip_table);
@@ -128,7 +128,7 @@ static int populate_maps(struct xdp_lb_kern *skel, const char *ifname,
 
 		if (parse_mac(be_args[i].mac_str, be.mac) < 0) {
 			fprintf(stderr, "Bad backend MAC: %s\n",
-				be_args[i].mac_str);
+			        be_args[i].mac_str);
 			return -1;
 		}
 
@@ -155,8 +155,9 @@ static int populate_maps(struct xdp_lb_kern *skel, const char *ifname,
 		    strlen(egress_iface) > 0) {
 			unsigned int egress_idx = if_nametoindex(egress_iface);
 			if (!egress_idx) {
-				fprintf(stderr, "Egress interface %s not found\n",
-					egress_iface);
+				fprintf(stderr,
+				        "Egress interface %s not found\n",
+				        egress_iface);
 				return -1;
 			}
 			lbcfg.use_redirect = 1;
@@ -164,10 +165,10 @@ static int populate_maps(struct xdp_lb_kern *skel, const char *ifname,
 			__u32 devmap_key = 0;
 			__u32 devmap_val = egress_idx;
 			int devmap_fd = bpf_map__fd(skel->maps.tx_port);
-			bpf_map_update_elem(devmap_fd, &devmap_key,
-					    &devmap_val, BPF_ANY);
-			printf("  redirect -> %s (ifindex %u)\n",
-			       egress_iface, egress_idx);
+			bpf_map_update_elem(devmap_fd, &devmap_key, &devmap_val,
+			                    BPF_ANY);
+			printf("  redirect -> %s (ifindex %u)\n", egress_iface,
+			       egress_idx);
 		}
 
 		__u32 cfg_key = CFG_IDX;
@@ -176,15 +177,16 @@ static int populate_maps(struct xdp_lb_kern *skel, const char *ifname,
 
 		char ip_str[INET_ADDRSTRLEN] = "none";
 		if (lbcfg.lb_ip)
-			inet_ntop(AF_INET, &lbcfg.lb_ip, ip_str, sizeof(ip_str));
+			inet_ntop(AF_INET, &lbcfg.lb_ip, ip_str,
+			          sizeof(ip_str));
 		printf("  lb_mac = %02x:%02x:%02x:%02x:%02x:%02x  lb_ip = %s\n",
-		       lb_mac[0], lb_mac[1], lb_mac[2],
-		       lb_mac[3], lb_mac[4], lb_mac[5], ip_str);
+		       lb_mac[0], lb_mac[1], lb_mac[2], lb_mac[3], lb_mac[4],
+		       lb_mac[5], ip_str);
 	}
 
 	const char *proto_name = (protocol == IPPROTO_TCP) ? "tcp" : "udp";
-	printf("VIP %s:%d/%s -> %d backends (total_weight=%d)\n",
-	       vip_ip, vip_port, proto_name, be_count, total_weight);
+	printf("VIP %s:%d/%s -> %d backends (total_weight=%d)\n", vip_ip,
+	       vip_port, proto_name, be_count, total_weight);
 	return 0;
 }
 
@@ -203,23 +205,24 @@ static void unpin_maps(struct xdp_lb_kern *skel)
 static void usage(const char *prog)
 {
 	fprintf(stderr,
-		"Usage: %s <command> [options]\n"
-		"\n"
-		"Commands:\n"
-		"  start   -i <iface> -c <config.json>\n"
-		"  start   -i <iface> -v <vip> -b <backend> [-b ...]\n"
-		"  stop    -i <interface>\n"
-		"  stats   [-w]\n"
-		"  status\n"
-		"  events\n"
-		"  reload  -c <config.json>\n"
-		"\n"
-		"Examples:\n"
-		"  %s start -i eth0 -c config/example.json\n"
-		"  %s start -i eth0 -v 10.0.0.100:80:tcp -b 10.0.0.2:80:aa:bb:cc:dd:ee:01\n"
-		"  %s stats -w\n"
-		"  %s events\n",
-		prog, prog, prog, prog, prog);
+	        "Usage: %s <command> [options]\n"
+	        "\n"
+	        "Commands:\n"
+	        "  start   -i <iface> -c <config.json>\n"
+	        "  start   -i <iface> -v <vip> -b <backend> [-b ...]\n"
+	        "  stop    -i <interface>\n"
+	        "  stats   [-w]\n"
+	        "  status\n"
+	        "  events\n"
+	        "  reload  -c <config.json>\n"
+	        "\n"
+	        "Examples:\n"
+	        "  %s start -i eth0 -c config/example.json\n"
+	        "  %s start -i eth0 -v 10.0.0.100:80:tcp -b "
+	        "10.0.0.2:80:aa:bb:cc:dd:ee:01\n"
+	        "  %s stats -w\n"
+	        "  %s events\n",
+	        prog, prog, prog, prog, prog);
 }
 
 static int cmd_start(int argc, char **argv)
@@ -246,16 +249,16 @@ static int cmd_start(int argc, char **argv)
 		case 'b':
 			if (be_count >= MAX_BACKENDS_CLI) {
 				fprintf(stderr, "Too many backends (max %d)\n",
-					MAX_BACKENDS_CLI);
+				        MAX_BACKENDS_CLI);
 				return 1;
 			}
 			if (sscanf(optarg, "%[^:]:%d:%17s",
-				   be_args[be_count].ip,
-				   &be_args[be_count].port,
-				   be_args[be_count].mac_str) != 3) {
+			           be_args[be_count].ip,
+			           &be_args[be_count].port,
+			           be_args[be_count].mac_str) != 3) {
 				fprintf(stderr,
-					"Bad backend: %s (ip:port:mac)\n",
-					optarg);
+				        "Bad backend: %s (ip:port:mac)\n",
+				        optarg);
 				return 1;
 			}
 			be_count++;
@@ -286,8 +289,9 @@ static int cmd_start(int argc, char **argv)
 	}
 
 	if (!config_path && (!vip_str || be_count == 0)) {
-		fprintf(stderr,
-			"Error: -c <config> or -v <vip> -b <backend> required\n");
+		fprintf(
+		    stderr,
+		    "Error: -c <config> or -v <vip> -b <backend> required\n");
 		return 1;
 	}
 
@@ -313,33 +317,30 @@ static int cmd_start(int argc, char **argv)
 
 	if (pin_maps(skel) < 0) {
 		fprintf(stderr, "Warning: failed to pin maps to %s\n",
-			PIN_BASE_DIR);
+		        PIN_BASE_DIR);
 	}
 
 	if (cfg) {
 		for (int i = 0; i < cfg->backend_count; i++) {
 			snprintf(be_args[i].ip, sizeof(be_args[i].ip), "%s",
-				 cfg->backends[i].ip);
+			         cfg->backends[i].ip);
 			be_args[i].port = cfg->backends[i].port;
-			snprintf(be_args[i].mac_str,
-				 sizeof(be_args[i].mac_str), "%s",
-				 cfg->backends[i].mac_str);
+			snprintf(be_args[i].mac_str, sizeof(be_args[i].mac_str),
+			         "%s", cfg->backends[i].mac_str);
 			be_args[i].weight = cfg->backends[i].weight;
 		}
 		be_count = cfg->backend_count;
 
-		err = populate_maps(skel, ifname,
-				    cfg->vip_ip, cfg->vip_port,
-				    cfg->protocol, be_args, be_count,
-				    cfg->redirect_enabled,
-				    cfg->egress_iface);
+		err = populate_maps(skel, ifname, cfg->vip_ip, cfg->vip_port,
+		                    cfg->protocol, be_args, be_count,
+		                    cfg->redirect_enabled, cfg->egress_iface);
 	} else {
 		char vip_ip[INET_ADDRSTRLEN];
 		int vip_port;
 		char proto_str[8];
 
 		if (sscanf(vip_str, "%[^:]:%d:%7s", vip_ip, &vip_port,
-			   proto_str) != 3) {
+		           proto_str) != 3) {
 			fprintf(stderr, "Bad VIP: %s\n", vip_str);
 			err = -1;
 			goto cleanup_pin;
@@ -357,7 +358,7 @@ static int cmd_start(int argc, char **argv)
 		}
 
 		err = populate_maps(skel, ifname, vip_ip, vip_port, protocol,
-				    be_args, be_count, 0, NULL);
+		                    be_args, be_count, 0, NULL);
 	}
 
 	if (err)
@@ -370,8 +371,8 @@ static int cmd_start(int argc, char **argv)
 		goto cleanup_pin;
 	}
 
-	printf("XDP load balancer attached to %s (ifindex %u)\n",
-	       ifname, ifindex);
+	printf("XDP load balancer attached to %s (ifindex %u)\n", ifname,
+	       ifindex);
 
 	struct health_ctx *hctx = NULL;
 	if (cfg && cfg->health_interval > 0 && be_count > 0) {
@@ -386,8 +387,9 @@ static int cmd_start(int argc, char **argv)
 			hctx->nr_physical = be_count;
 			__u32 s = 0;
 			for (int i = 0; i < be_count; i++) {
-				int w = be_args[i].weight > 0 ?
-					be_args[i].weight : 1;
+				int w = be_args[i].weight > 0
+				            ? be_args[i].weight
+				            : 1;
 				hctx->slots[i].start = s;
 				hctx->slots[i].count = w;
 				s += w;
@@ -466,17 +468,15 @@ static int cmd_stop(int argc, char **argv)
 static int cmd_status(void)
 {
 	char path[256];
-	const char *map_names[] = {
-		"vip_table", "backends", "stats",
-		"connection_table", "lb_config"
-	};
+	const char *map_names[] = {"vip_table", "backends", "stats",
+	                           "connection_table", "lb_config"};
 
 	printf("Pin directory: %s\n", PIN_BASE_DIR);
 
 	int any = 0;
 	for (int i = 0; i < 5; i++) {
 		snprintf(path, sizeof(path), "%s/%s", PIN_BASE_DIR,
-			 map_names[i]);
+		         map_names[i]);
 		int fd = bpf_obj_get(path);
 		if (fd >= 0) {
 			printf("  %-20s pinned\n", map_names[i]);
@@ -486,7 +486,8 @@ static int cmd_status(void)
 	}
 
 	if (!any) {
-		printf("  No pinned maps found. Is the load balancer running?\n");
+		printf(
+		    "  No pinned maps found. Is the load balancer running?\n");
 		return 1;
 	}
 
@@ -534,8 +535,9 @@ static int cmd_reload(int argc, char **argv)
 
 	if (backends_fd < 0 || vip_fd < 0) {
 		fprintf(stderr,
-			"Cannot open pinned maps at %s\n"
-			"Is the load balancer running?\n", PIN_BASE_DIR);
+		        "Cannot open pinned maps at %s\n"
+		        "Is the load balancer running?\n",
+		        PIN_BASE_DIR);
 		config_free(cfg);
 		return 1;
 	}
@@ -543,8 +545,8 @@ static int cmd_reload(int argc, char **argv)
 	/* Step 1: write all backend slots (expanded by weight) */
 	int total_weight = 0;
 	for (int i = 0; i < cfg->backend_count; i++) {
-		int w = cfg->backends[i].weight > 0 ?
-			cfg->backends[i].weight : 1;
+		int w =
+		    cfg->backends[i].weight > 0 ? cfg->backends[i].weight : 1;
 		total_weight += w;
 	}
 
@@ -555,8 +557,8 @@ static int cmd_reload(int argc, char **argv)
 		be.port = htons(cfg->backends[i].port);
 		parse_mac(cfg->backends[i].mac_str, be.mac);
 
-		int w = cfg->backends[i].weight > 0 ?
-			cfg->backends[i].weight : 1;
+		int w =
+		    cfg->backends[i].weight > 0 ? cfg->backends[i].weight : 1;
 		for (int j = 0; j < w; j++) {
 			__u32 key = slot++;
 			bpf_map_update_elem(backends_fd, &key, &be, BPF_ANY);
@@ -570,12 +572,12 @@ static int cmd_reload(int argc, char **argv)
 	}
 
 	/* Step 2: update VIP entry with new backend_count */
-	struct vip_key vkey = { .protocol = cfg->protocol };
+	struct vip_key vkey = {.protocol = cfg->protocol};
 	inet_pton(AF_INET, cfg->vip_ip, &vkey.address);
 	vkey.port = htons(cfg->vip_port);
 	struct vip_meta vmeta = {
-		.backend_count     = total_weight,
-		.backend_start_idx = 0,
+	    .backend_count = total_weight,
+	    .backend_start_idx = 0,
 	};
 	bpf_map_update_elem(vip_fd, &vkey, &vmeta, BPF_ANY);
 

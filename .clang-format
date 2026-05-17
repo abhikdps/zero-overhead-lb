@@ -1,6 +1,7 @@
-BasedOnStyle: Linux
+BasedOnStyle: LLVM
 IndentWidth: 8
 UseTab: ForIndentation
+TabWidth: 8
 ColumnLimit: 80
 BreakBeforeBraces: Linux
 AllowShortFunctionsOnASingleLine: None
