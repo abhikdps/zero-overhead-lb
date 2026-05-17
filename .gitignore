@@ -2,3 +2,5 @@ build/
 src/bpf/vmlinux.h
 *.o
 *.skel.h
+__pycache__/
+*.pyc

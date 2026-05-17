@@ -1,0 +1,38 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  build:
+    runs-on: ubuntu-24.04
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            clang llvm libbpf-dev linux-tools-common \
+            linux-tools-$(uname -r) libelf-dev zlib1g-dev \
+            pkg-config clang-format cppcheck
+
+      - name: Build
+        run: make
+
+      - name: Check formatting
+        run: make fmt-check
+
+      - name: Static analysis
+        run: make check
+
+  # Functional tests require BPF-capable kernel + root.
+  # Run manually or on a self-hosted runner with:
+  #   sudo scripts/setup_testbed.sh
+  #   sudo nsenter --net=/var/run/netns/lb-ns build/zlb start \
+  #       -i veth-lb-ns -c config/example.json &
+  #   sudo pytest tests/test_lb.py -v
+  #   sudo scripts/teardown_testbed.sh

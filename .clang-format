@@ -1,0 +1,8 @@
+BasedOnStyle: Linux
+IndentWidth: 8
+UseTab: ForIndentation
+ColumnLimit: 80
+BreakBeforeBraces: Linux
+AllowShortFunctionsOnASingleLine: None
+AllowShortIfStatementsOnASingleLine: false
+SortIncludes: false
