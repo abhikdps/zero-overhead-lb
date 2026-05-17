@@ -17,7 +17,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y \
             clang llvm libbpf-dev linux-tools-common \
-            linux-tools-$(uname -r) libelf-dev zlib1g-dev \
+            linux-tools-generic libelf-dev zlib1g-dev \
             pkg-config clang-format cppcheck
 
       - name: Build
