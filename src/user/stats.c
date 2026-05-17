@@ -55,14 +55,35 @@ struct backend_display {
 	__u64    prev_packets;
 };
 
+static int find_display(struct backend_display *out, int count,
+		        const char *addr_str)
+{
+	for (int i = 0; i < count; i++) {
+		if (strcmp(out[i].addr_str, addr_str) == 0)
+			return i;
+	}
+	return -1;
+}
+
 static int read_stats(int stats_fd, int backends_fd, int nr_cpus,
 		      struct backend_display *out, int *out_count)
 {
-	int count = 0;
+	int count = *out_count;
 	size_t val_sz = nr_cpus * sizeof(struct lb_stats);
 	struct lb_stats *percpu_vals = malloc(val_sz);
 	if (!percpu_vals)
 		return -1;
+
+	/* Save previous packet counts for PPS */
+	__u64 prev[MAX_BACKENDS];
+	for (int i = 0; i < count; i++)
+		prev[i] = out[i].packets;
+
+	/* Zero out current values before re-aggregation */
+	for (int i = 0; i < count; i++) {
+		out[i].packets = 0;
+		out[i].bytes = 0;
+	}
 
 	for (__u32 i = 0; i < MAX_BACKENDS; i++) {
 		struct backend_info be;
@@ -74,22 +95,31 @@ static int read_stats(int stats_fd, int backends_fd, int nr_cpus,
 
 		char ip[INET_ADDRSTRLEN];
 		inet_ntop(AF_INET, &be.address, ip, sizeof(ip));
-		snprintf(out[count].addr_str, sizeof(out[count].addr_str),
-			 "%s:%d", ip, ntohs(be.port));
+		char addr_str[24];
+		snprintf(addr_str, sizeof(addr_str), "%s:%d",
+			 ip, ntohs(be.port));
+
+		int idx = find_display(out, count, addr_str);
+		if (idx < 0) {
+			idx = count++;
+			snprintf(out[idx].addr_str, sizeof(out[idx].addr_str),
+				 "%s", addr_str);
+			out[idx].packets = 0;
+			out[idx].bytes = 0;
+			out[idx].prev_packets = 0;
+		}
 
 		memset(percpu_vals, 0, val_sz);
 		if (bpf_map_lookup_elem(stats_fd, &i, percpu_vals) == 0) {
-			__u64 pkts = 0, byts = 0;
 			for (int c = 0; c < nr_cpus; c++) {
-				pkts += percpu_vals[c].packets;
-				byts += percpu_vals[c].bytes;
+				out[idx].packets += percpu_vals[c].packets;
+				out[idx].bytes += percpu_vals[c].bytes;
 			}
-			out[count].prev_packets = out[count].packets;
-			out[count].packets = pkts;
-			out[count].bytes = byts;
 		}
-		count++;
 	}
+
+	for (int i = 0; i < count; i++)
+		out[i].prev_packets = (i < *out_count) ? prev[i] : 0;
 
 	*out_count = count;
 	free(percpu_vals);

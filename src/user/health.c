@@ -55,16 +55,25 @@ static int tcp_check(struct backend_info *be, int timeout_ms)
 	return -1;
 }
 
+static void update_slots(struct health_ctx *ctx, int phys_idx,
+			 struct backend_info *be)
+{
+	for (int s = 0; s < ctx->slots[phys_idx].count; s++) {
+		__u32 key = ctx->slots[phys_idx].start + s;
+		bpf_map_update_elem(ctx->backends_fd, &key, be, BPF_ANY);
+	}
+}
+
 static void *health_thread(void *arg)
 {
 	struct health_ctx *ctx = arg;
-	struct backend_health bh[MAX_BACKENDS] = {0};
+	struct backend_health bh[MAX_PHYSICAL_BACKENDS] = {0};
 
-	for (int i = 0; i < ctx->nr_backends; i++)
+	for (int i = 0; i < ctx->nr_physical; i++)
 		bh[i].healthy = 1;
 
 	while (!ctx->stop) {
-		for (int i = 0; i < ctx->nr_backends; i++) {
+		for (int i = 0; i < ctx->nr_physical; i++) {
 			struct backend_info *be = &ctx->originals[i];
 			int ok = (tcp_check(be, ctx->timeout_ms) == 0);
 
@@ -81,11 +90,8 @@ static void *health_thread(void *arg)
 					fprintf(stderr,
 						"[health] %s:%d UP\n",
 						ip, ntohs(be->port));
-
-					__u32 key = i;
-					bpf_map_update_elem(
-						ctx->backends_fd, &key,
-						&ctx->originals[i], BPF_ANY);
+					update_slots(ctx, i,
+						     &ctx->originals[i]);
 				}
 			} else {
 				bh[i].consecutive_ok = 0;
@@ -101,20 +107,16 @@ static void *health_thread(void *arg)
 
 					int replace = -1;
 					for (int j = 0;
-					     j < ctx->nr_backends; j++) {
+					     j < ctx->nr_physical; j++) {
 						if (j != i && bh[j].healthy) {
 							replace = j;
 							break;
 						}
 					}
 
-					if (replace >= 0) {
-						__u32 key = i;
-						bpf_map_update_elem(
-							ctx->backends_fd, &key,
-							&ctx->originals[replace],
-							BPF_ANY);
-					}
+					if (replace >= 0)
+						update_slots(ctx, i,
+							     &ctx->originals[replace]);
 				}
 			}
 		}
@@ -128,8 +130,8 @@ static void *health_thread(void *arg)
 
 int health_start(struct health_ctx *ctx)
 {
-	for (int i = 0; i < ctx->nr_backends; i++) {
-		__u32 key = i;
+	for (int i = 0; i < ctx->nr_physical; i++) {
+		__u32 key = ctx->slots[i].start;
 		if (bpf_map_lookup_elem(ctx->backends_fd, &key,
 					&ctx->originals[i]) < 0) {
 			fprintf(stderr, "Failed to read backend %d\n", i);
@@ -143,8 +145,9 @@ int health_start(struct health_ctx *ctx)
 		return -1;
 	}
 
-	fprintf(stderr, "[health] started: interval=%ds timeout=%dms\n",
-		ctx->interval_sec, ctx->timeout_ms);
+	fprintf(stderr, "[health] started: interval=%ds timeout=%dms "
+		"backends=%d\n",
+		ctx->interval_sec, ctx->timeout_ms, ctx->nr_physical);
 	return 0;
 }
 
@@ -153,11 +156,8 @@ void health_stop(struct health_ctx *ctx)
 	ctx->stop = 1;
 	pthread_join(ctx->thread, NULL);
 
-	for (int i = 0; i < ctx->nr_backends; i++) {
-		__u32 key = i;
-		bpf_map_update_elem(ctx->backends_fd, &key,
-				    &ctx->originals[i], BPF_ANY);
-	}
+	for (int i = 0; i < ctx->nr_physical; i++)
+		update_slots(ctx, i, &ctx->originals[i]);
 
 	fprintf(stderr, "[health] stopped, backends restored\n");
 }

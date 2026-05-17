@@ -10,6 +10,7 @@ struct backend_cfg {
 	char     ip[16];
 	int      port;
 	char     mac_str[18];
+	int      weight;
 };
 
 struct lb_cfg {
@@ -23,9 +24,13 @@ struct lb_cfg {
 
 	int    health_interval;
 	int    health_timeout;
+
+	int    redirect_enabled;
+	char   egress_iface[16];
 };
 
 struct lb_cfg *config_load(const char *path);
 void config_free(struct lb_cfg *cfg);
+int  config_validate(struct lb_cfg *cfg);
 
 #endif

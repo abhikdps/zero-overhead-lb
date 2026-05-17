@@ -17,6 +17,7 @@
 #include "config.h"
 #include "stats.h"
 #include "health.h"
+#include "events.h"
 
 #define MAX_BACKENDS_CLI 16
 #define PIN_BASE_DIR     "/sys/fs/bpf/zlb"
@@ -32,6 +33,7 @@ struct backend_arg {
 	char ip[INET_ADDRSTRLEN];
 	int  port;
 	char mac_str[18];
+	int  weight;
 };
 
 static int parse_mac(const char *str, __u8 mac[6])
@@ -42,6 +44,26 @@ static int parse_mac(const char *str, __u8 mac[6])
 		return -1;
 	for (int i = 0; i < 6; i++)
 		mac[i] = (__u8)m[i];
+	return 0;
+}
+
+static int get_iface_ip(const char *ifname, __be32 *ip)
+{
+	int fd = socket(AF_INET, SOCK_DGRAM, 0);
+	if (fd < 0)
+		return -1;
+
+	struct ifreq ifr;
+	memset(&ifr, 0, sizeof(ifr));
+	strncpy(ifr.ifr_name, ifname, IFNAMSIZ - 1);
+
+	int err = ioctl(fd, SIOCGIFADDR, &ifr);
+	close(fd);
+	if (err < 0)
+		return -1;
+
+	struct sockaddr_in *addr = (struct sockaddr_in *)&ifr.ifr_addr;
+	*ip = addr->sin_addr.s_addr;
 	return 0;
 }
 
@@ -66,7 +88,8 @@ static int get_iface_mac(const char *ifname, __u8 mac[6])
 
 static int populate_maps(struct xdp_lb_kern *skel, const char *ifname,
 			 const char *vip_ip, int vip_port, __u8 protocol,
-			 struct backend_arg *be_args, int be_count)
+			 struct backend_arg *be_args, int be_count,
+			 int redirect_enabled, const char *egress_iface)
 {
 	struct vip_key vkey = { .protocol = protocol };
 	if (inet_pton(AF_INET, vip_ip, &vkey.address) != 1) {
@@ -75,8 +98,14 @@ static int populate_maps(struct xdp_lb_kern *skel, const char *ifname,
 	}
 	vkey.port = htons(vip_port);
 
+	int total_weight = 0;
+	for (int i = 0; i < be_count; i++) {
+		int w = be_args[i].weight > 0 ? be_args[i].weight : 1;
+		total_weight += w;
+	}
+
 	struct vip_meta vmeta = {
-		.backend_count     = be_count,
+		.backend_count     = total_weight,
 		.backend_start_idx = 0,
 	};
 
@@ -87,6 +116,7 @@ static int populate_maps(struct xdp_lb_kern *skel, const char *ifname,
 	}
 
 	map_fd = bpf_map__fd(skel->maps.backends);
+	__u32 slot = 0;
 	for (int i = 0; i < be_count; i++) {
 		struct backend_info be = {0};
 
@@ -102,31 +132,59 @@ static int populate_maps(struct xdp_lb_kern *skel, const char *ifname,
 			return -1;
 		}
 
-		__u32 key = i;
-		if (bpf_map_update_elem(map_fd, &key, &be, BPF_ANY)) {
-			perror("Failed to update backends");
-			return -1;
+		int w = be_args[i].weight > 0 ? be_args[i].weight : 1;
+		for (int j = 0; j < w; j++) {
+			__u32 key = slot++;
+			if (bpf_map_update_elem(map_fd, &key, &be, BPF_ANY)) {
+				perror("Failed to update backends");
+				return -1;
+			}
 		}
 
-		printf("  backend[%d] = %s:%d (%s)\n", i,
-		       be_args[i].ip, be_args[i].port, be_args[i].mac_str);
+		printf("  backend[%d] = %s:%d (%s) weight=%d\n", i,
+		       be_args[i].ip, be_args[i].port, be_args[i].mac_str, w);
 	}
 
 	__u8 lb_mac[6];
 	if (get_iface_mac(ifname, lb_mac) == 0) {
-		struct lb_config cfg = {0};
-		memcpy(cfg.lb_mac, lb_mac, 6);
+		struct lb_config lbcfg = {0};
+		memcpy(lbcfg.lb_mac, lb_mac, 6);
+		get_iface_ip(ifname, &lbcfg.lb_ip);
+
+		if (redirect_enabled && egress_iface &&
+		    strlen(egress_iface) > 0) {
+			unsigned int egress_idx = if_nametoindex(egress_iface);
+			if (!egress_idx) {
+				fprintf(stderr, "Egress interface %s not found\n",
+					egress_iface);
+				return -1;
+			}
+			lbcfg.use_redirect = 1;
+
+			__u32 devmap_key = 0;
+			__u32 devmap_val = egress_idx;
+			int devmap_fd = bpf_map__fd(skel->maps.tx_port);
+			bpf_map_update_elem(devmap_fd, &devmap_key,
+					    &devmap_val, BPF_ANY);
+			printf("  redirect -> %s (ifindex %u)\n",
+			       egress_iface, egress_idx);
+		}
+
 		__u32 cfg_key = CFG_IDX;
 		map_fd = bpf_map__fd(skel->maps.lb_config);
-		bpf_map_update_elem(map_fd, &cfg_key, &cfg, BPF_ANY);
-		printf("  lb_mac = %02x:%02x:%02x:%02x:%02x:%02x\n",
+		bpf_map_update_elem(map_fd, &cfg_key, &lbcfg, BPF_ANY);
+
+		char ip_str[INET_ADDRSTRLEN] = "none";
+		if (lbcfg.lb_ip)
+			inet_ntop(AF_INET, &lbcfg.lb_ip, ip_str, sizeof(ip_str));
+		printf("  lb_mac = %02x:%02x:%02x:%02x:%02x:%02x  lb_ip = %s\n",
 		       lb_mac[0], lb_mac[1], lb_mac[2],
-		       lb_mac[3], lb_mac[4], lb_mac[5]);
+		       lb_mac[3], lb_mac[4], lb_mac[5], ip_str);
 	}
 
 	const char *proto_name = (protocol == IPPROTO_TCP) ? "tcp" : "udp";
-	printf("VIP %s:%d/%s -> %d backends\n",
-	       vip_ip, vip_port, proto_name, be_count);
+	printf("VIP %s:%d/%s -> %d backends (total_weight=%d)\n",
+	       vip_ip, vip_port, proto_name, be_count, total_weight);
 	return 0;
 }
 
@@ -148,17 +206,20 @@ static void usage(const char *prog)
 		"Usage: %s <command> [options]\n"
 		"\n"
 		"Commands:\n"
-		"  start  -i <iface> -c <config.json>\n"
-		"  start  -i <iface> -v <vip> -b <backend> [-b ...]\n"
-		"  stop   -i <interface>\n"
-		"  stats  [-w]\n"
+		"  start   -i <iface> -c <config.json>\n"
+		"  start   -i <iface> -v <vip> -b <backend> [-b ...]\n"
+		"  stop    -i <interface>\n"
+		"  stats   [-w]\n"
 		"  status\n"
+		"  events\n"
+		"  reload  -c <config.json>\n"
 		"\n"
 		"Examples:\n"
 		"  %s start -i eth0 -c config/example.json\n"
 		"  %s start -i eth0 -v 10.0.0.100:80:tcp -b 10.0.0.2:80:aa:bb:cc:dd:ee:01\n"
-		"  %s stats -w\n",
-		prog, prog, prog, prog);
+		"  %s stats -w\n"
+		"  %s events\n",
+		prog, prog, prog, prog, prog);
 }
 
 static int cmd_start(int argc, char **argv)
@@ -210,6 +271,10 @@ static int cmd_start(int argc, char **argv)
 		cfg = config_load(config_path);
 		if (!cfg)
 			return 1;
+		if (config_validate(cfg) < 0) {
+			config_free(cfg);
+			return 1;
+		}
 		if (!ifname)
 			ifname = cfg->interface;
 	}
@@ -259,12 +324,15 @@ static int cmd_start(int argc, char **argv)
 			snprintf(be_args[i].mac_str,
 				 sizeof(be_args[i].mac_str), "%s",
 				 cfg->backends[i].mac_str);
+			be_args[i].weight = cfg->backends[i].weight;
 		}
 		be_count = cfg->backend_count;
 
 		err = populate_maps(skel, ifname,
 				    cfg->vip_ip, cfg->vip_port,
-				    cfg->protocol, be_args, be_count);
+				    cfg->protocol, be_args, be_count,
+				    cfg->redirect_enabled,
+				    cfg->egress_iface);
 	} else {
 		char vip_ip[INET_ADDRSTRLEN];
 		int vip_port;
@@ -289,7 +357,7 @@ static int cmd_start(int argc, char **argv)
 		}
 
 		err = populate_maps(skel, ifname, vip_ip, vip_port, protocol,
-				    be_args, be_count);
+				    be_args, be_count, 0, NULL);
 	}
 
 	if (err)
@@ -314,6 +382,17 @@ static int cmd_start(int argc, char **argv)
 			hctx->nr_backends = be_count;
 			hctx->interval_sec = cfg->health_interval;
 			hctx->timeout_ms = cfg->health_timeout;
+
+			hctx->nr_physical = be_count;
+			__u32 s = 0;
+			for (int i = 0; i < be_count; i++) {
+				int w = be_args[i].weight > 0 ?
+					be_args[i].weight : 1;
+				hctx->slots[i].start = s;
+				hctx->slots[i].count = w;
+				s += w;
+			}
+
 			if (health_start(hctx) < 0) {
 				free(hctx);
 				hctx = NULL;
@@ -414,6 +493,119 @@ static int cmd_status(void)
 	return 0;
 }
 
+static int cmd_reload(int argc, char **argv)
+{
+	const char *config_path = NULL;
+	int opt;
+
+	optind = 1;
+	while ((opt = getopt(argc, argv, "c:")) != -1) {
+		switch (opt) {
+		case 'c':
+			config_path = optarg;
+			break;
+		default:
+			fprintf(stderr, "Usage: zlb reload -c <config.json>\n");
+			return 1;
+		}
+	}
+
+	if (!config_path) {
+		fprintf(stderr, "Usage: zlb reload -c <config.json>\n");
+		return 1;
+	}
+
+	struct lb_cfg *cfg = config_load(config_path);
+	if (!cfg)
+		return 1;
+
+	if (config_validate(cfg) < 0) {
+		config_free(cfg);
+		return 1;
+	}
+
+	char path[256];
+	snprintf(path, sizeof(path), "%s/backends", PIN_BASE_DIR);
+	int backends_fd = bpf_obj_get(path);
+	snprintf(path, sizeof(path), "%s/vip_table", PIN_BASE_DIR);
+	int vip_fd = bpf_obj_get(path);
+	snprintf(path, sizeof(path), "%s/lb_config", PIN_BASE_DIR);
+	int config_fd = bpf_obj_get(path);
+
+	if (backends_fd < 0 || vip_fd < 0) {
+		fprintf(stderr,
+			"Cannot open pinned maps at %s\n"
+			"Is the load balancer running?\n", PIN_BASE_DIR);
+		config_free(cfg);
+		return 1;
+	}
+
+	/* Step 1: write all backend slots (expanded by weight) */
+	int total_weight = 0;
+	for (int i = 0; i < cfg->backend_count; i++) {
+		int w = cfg->backends[i].weight > 0 ?
+			cfg->backends[i].weight : 1;
+		total_weight += w;
+	}
+
+	__u32 slot = 0;
+	for (int i = 0; i < cfg->backend_count; i++) {
+		struct backend_info be = {0};
+		inet_pton(AF_INET, cfg->backends[i].ip, &be.address);
+		be.port = htons(cfg->backends[i].port);
+		parse_mac(cfg->backends[i].mac_str, be.mac);
+
+		int w = cfg->backends[i].weight > 0 ?
+			cfg->backends[i].weight : 1;
+		for (int j = 0; j < w; j++) {
+			__u32 key = slot++;
+			bpf_map_update_elem(backends_fd, &key, &be, BPF_ANY);
+		}
+	}
+
+	/* Clear stale slots beyond new total */
+	struct backend_info empty = {0};
+	for (__u32 k = slot; k < MAX_BACKENDS; k++) {
+		bpf_map_update_elem(backends_fd, &k, &empty, BPF_ANY);
+	}
+
+	/* Step 2: update VIP entry with new backend_count */
+	struct vip_key vkey = { .protocol = cfg->protocol };
+	inet_pton(AF_INET, cfg->vip_ip, &vkey.address);
+	vkey.port = htons(cfg->vip_port);
+	struct vip_meta vmeta = {
+		.backend_count     = total_weight,
+		.backend_start_idx = 0,
+	};
+	bpf_map_update_elem(vip_fd, &vkey, &vmeta, BPF_ANY);
+
+	/* Step 3: update lb_config if possible */
+	if (config_fd >= 0 && cfg->interface[0]) {
+		struct lb_config lbcfg = {0};
+		get_iface_mac(cfg->interface, lbcfg.lb_mac);
+		get_iface_ip(cfg->interface, &lbcfg.lb_ip);
+
+		if (cfg->redirect_enabled && cfg->egress_iface[0]) {
+			lbcfg.use_redirect = 1;
+			/* DEVMAP update requires skeleton access; skip here */
+		}
+
+		__u32 cfg_key = CFG_IDX;
+		bpf_map_update_elem(config_fd, &cfg_key, &lbcfg, BPF_ANY);
+		close(config_fd);
+	}
+
+	printf("Reload complete: %d backends, total_weight=%d\n",
+	       cfg->backend_count, total_weight);
+	printf("Note: health checks use the running process config; "
+	       "restart zlb for health check updates.\n");
+
+	close(backends_fd);
+	close(vip_fd);
+	config_free(cfg);
+	return 0;
+}
+
 int main(int argc, char **argv)
 {
 	if (argc < 2) {
@@ -433,6 +625,10 @@ int main(int argc, char **argv)
 		return cmd_stats(argc, argv);
 	if (strcmp(cmd, "status") == 0)
 		return cmd_status();
+	if (strcmp(cmd, "events") == 0)
+		return cmd_events(argc, argv);
+	if (strcmp(cmd, "reload") == 0)
+		return cmd_reload(argc, argv);
 
 	fprintf(stderr, "Unknown command: %s\n", cmd);
 	usage(argv[0]);

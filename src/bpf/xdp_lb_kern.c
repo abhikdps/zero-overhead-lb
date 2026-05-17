@@ -42,6 +42,56 @@ struct {
 	__type(value, struct lb_config);
 } lb_config SEC(".maps");
 
+struct {
+	__uint(type, BPF_MAP_TYPE_RINGBUF);
+	__uint(max_entries, RINGBUF_SIZE);
+} events SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_DEVMAP);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, __u32);
+} tx_port SEC(".maps");
+
+struct {
+	__uint(type, BPF_MAP_TYPE_PERCPU_ARRAY);
+	__uint(max_entries, 1);
+	__type(key, __u32);
+	__type(value, __u64);
+} event_counter SEC(".maps");
+
+static __always_inline void emit_event(__u8 type, __u8 reason,
+				       struct iphdr *iph, __be16 sport,
+				       __be16 dport, __u32 be_idx)
+{
+	if (type == LB_EVENT_FORWARD) {
+		__u32 zero = 0;
+		__u64 *cnt = bpf_map_lookup_elem(&event_counter, &zero);
+		if (!cnt)
+			return;
+		(*cnt)++;
+		if (*cnt % EVENT_SAMPLE != 0)
+			return;
+	}
+
+	struct lb_event *e = bpf_ringbuf_reserve(&events, sizeof(*e), 0);
+	if (!e)
+		return;
+
+	e->type = type;
+	e->reason = reason;
+	e->protocol = iph ? iph->protocol : 0;
+	e->pad = 0;
+	e->src_ip = iph ? iph->saddr : 0;
+	e->dst_ip = iph ? iph->daddr : 0;
+	e->src_port = sport;
+	e->dst_port = dport;
+	e->backend_idx = be_idx;
+
+	bpf_ringbuf_submit(e, 0);
+}
+
 static __always_inline __u16 csum_fold(__u32 csum)
 {
 	csum = (csum & 0xffff) + (csum >> 16);
@@ -95,6 +145,13 @@ int xdp_lb_func(struct xdp_md *ctx)
 	if ((void *)iph + ip_hdr_len > data_end)
 		return XDP_DROP;
 
+	/* Pass IP fragments to kernel for reassembly.
+	 * 0x3FFF masks MF flag + 13-bit fragment offset (excludes DF). */
+	if (iph->frag_off & bpf_htons(0x3FFF)) {
+		emit_event(LB_EVENT_PASS, PASS_FRAGMENT, iph, 0, 0, 0);
+		return XDP_PASS;
+	}
+
 	__be16 src_port = 0;
 	__be16 dst_port = 0;
 	struct tcphdr *tcph = NULL;
@@ -116,6 +173,16 @@ int xdp_lb_func(struct xdp_md *ctx)
 		return XDP_PASS;
 	}
 
+	/* --- Pass traffic destined to the LB's own IP --- */
+
+	__u32 cfg_key = CFG_IDX;
+	struct lb_config *cfg = bpf_map_lookup_elem(&lb_config, &cfg_key);
+	if (cfg && cfg->lb_ip && iph->daddr == cfg->lb_ip) {
+		emit_event(LB_EVENT_PASS, PASS_LB_OWN_IP,
+			   iph, src_port, dst_port, 0);
+		return XDP_PASS;
+	}
+
 	/* --- VIP lookup --- */
 
 	struct vip_key vkey = {
@@ -125,11 +192,17 @@ int xdp_lb_func(struct xdp_md *ctx)
 	};
 
 	struct vip_meta *vmeta = bpf_map_lookup_elem(&vip_table, &vkey);
-	if (!vmeta)
+	if (!vmeta) {
+		emit_event(LB_EVENT_PASS, PASS_VIP_MISS,
+			   iph, src_port, dst_port, 0);
 		return XDP_PASS;
+	}
 
-	if (vmeta->backend_count == 0)
+	if (vmeta->backend_count == 0) {
+		emit_event(LB_EVENT_PASS, PASS_NO_BACKENDS,
+			   iph, src_port, dst_port, 0);
 		return XDP_PASS;
+	}
 
 	/* --- Backend selection with connection affinity --- */
 
@@ -148,12 +221,17 @@ int xdp_lb_func(struct xdp_md *ctx)
 		backend_idx = hash_ip(iph->saddr) % vmeta->backend_count;
 		struct conn_val new_cval = { .backend_idx = backend_idx };
 		bpf_map_update_elem(&connection_table, &ckey, &new_cval, BPF_NOEXIST);
+		emit_event(LB_EVENT_CONN_NEW, 0,
+			   iph, src_port, dst_port, backend_idx);
 	}
 
 	__u32 idx = vmeta->backend_start_idx + backend_idx;
 	struct backend_info *be = bpf_map_lookup_elem(&backends, &idx);
-	if (!be)
+	if (!be) {
+		emit_event(LB_EVENT_PASS, PASS_BACKEND_MISS,
+			   iph, src_port, dst_port, backend_idx);
 		return XDP_PASS;
+	}
 
 	/* --- MAC rewriting --- */
 
@@ -190,6 +268,12 @@ int xdp_lb_func(struct xdp_md *ctx)
 		st->bytes += data_end - data;
 	}
 
+	emit_event(LB_EVENT_FORWARD, 0, iph, src_port, dst_port, backend_idx);
+
+	if (cfg && cfg->use_redirect) {
+		__u32 tx_key = 0;
+		return bpf_redirect_map(&tx_port, tx_key, 0);
+	}
 	return XDP_TX;
 }
 

@@ -7,6 +7,12 @@
 
 #define HEALTH_FAIL_THRESHOLD 3
 #define HEALTH_OK_THRESHOLD   2
+#define MAX_PHYSICAL_BACKENDS 16
+
+struct backend_slot_range {
+	int start;
+	int count;
+};
 
 struct health_ctx {
 	int    backends_fd;
@@ -15,7 +21,9 @@ struct health_ctx {
 	int    interval_sec;
 	int    timeout_ms;
 
-	struct backend_info originals[MAX_BACKENDS];
+	int    nr_physical;
+	struct backend_slot_range slots[MAX_PHYSICAL_BACKENDS];
+	struct backend_info originals[MAX_PHYSICAL_BACKENDS];
 
 	volatile int stop;
 	pthread_t    thread;
