@@ -252,7 +252,7 @@ static int cmd_start(int argc, char **argv)
 				        MAX_BACKENDS_CLI);
 				return 1;
 			}
-			if (sscanf(optarg, "%[^:]:%d:%17s",
+			if (sscanf(optarg, "%15[^:]:%d:%17s",
 			           be_args[be_count].ip,
 			           &be_args[be_count].port,
 			           be_args[be_count].mac_str) != 3) {
@@ -339,7 +339,7 @@ static int cmd_start(int argc, char **argv)
 		int vip_port;
 		char proto_str[8];
 
-		if (sscanf(vip_str, "%[^:]:%d:%7s", vip_ip, &vip_port,
+		if (sscanf(vip_str, "%15[^:]:%d:%7s", vip_ip, &vip_port,
 		           proto_str) != 3) {
 			fprintf(stderr, "Bad VIP: %s\n", vip_str);
 			err = -1;

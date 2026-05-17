@@ -49,16 +49,16 @@ struct lb_cfg *config_load(const char *path)
 	cfg->health_interval = 5;
 	cfg->health_timeout = 2000;
 
-	cJSON *iface = cJSON_GetObjectItem(root, "interface");
+	const cJSON *iface = cJSON_GetObjectItem(root, "interface");
 	if (cJSON_IsString(iface))
 		snprintf(cfg->interface, sizeof(cfg->interface), "%s",
 		         iface->valuestring);
 
 	cJSON *vip = cJSON_GetObjectItem(root, "vip");
 	if (vip) {
-		cJSON *addr = cJSON_GetObjectItem(vip, "address");
-		cJSON *port = cJSON_GetObjectItem(vip, "port");
-		cJSON *proto = cJSON_GetObjectItem(vip, "protocol");
+		const cJSON *addr = cJSON_GetObjectItem(vip, "address");
+		const cJSON *port = cJSON_GetObjectItem(vip, "port");
+		const cJSON *proto = cJSON_GetObjectItem(vip, "protocol");
 
 		if (cJSON_IsString(addr))
 			snprintf(cfg->vip_ip, sizeof(cfg->vip_ip), "%s",
@@ -83,9 +83,9 @@ struct lb_cfg *config_load(const char *path)
 
 			struct backend_cfg *b =
 			    &cfg->backends[cfg->backend_count];
-			cJSON *addr = cJSON_GetObjectItem(be, "address");
-			cJSON *port = cJSON_GetObjectItem(be, "port");
-			cJSON *mac = cJSON_GetObjectItem(be, "mac");
+			const cJSON *addr = cJSON_GetObjectItem(be, "address");
+			const cJSON *port = cJSON_GetObjectItem(be, "port");
+			const cJSON *mac = cJSON_GetObjectItem(be, "mac");
 
 			if (cJSON_IsString(addr))
 				snprintf(b->ip, sizeof(b->ip), "%s",
@@ -108,8 +108,8 @@ struct lb_cfg *config_load(const char *path)
 
 	cJSON *health = cJSON_GetObjectItem(root, "health");
 	if (health) {
-		cJSON *interval = cJSON_GetObjectItem(health, "interval");
-		cJSON *timeout = cJSON_GetObjectItem(health, "timeout");
+		const cJSON *interval = cJSON_GetObjectItem(health, "interval");
+		const cJSON *timeout = cJSON_GetObjectItem(health, "timeout");
 
 		if (cJSON_IsNumber(interval))
 			cfg->health_interval = interval->valueint;
@@ -119,8 +119,9 @@ struct lb_cfg *config_load(const char *path)
 
 	cJSON *redirect = cJSON_GetObjectItem(root, "redirect");
 	if (redirect) {
-		cJSON *enabled = cJSON_GetObjectItem(redirect, "enabled");
-		cJSON *egress = cJSON_GetObjectItem(redirect, "egress_iface");
+		const cJSON *enabled = cJSON_GetObjectItem(redirect, "enabled");
+		const cJSON *egress =
+		    cJSON_GetObjectItem(redirect, "egress_iface");
 
 		if (cJSON_IsTrue(enabled))
 			cfg->redirect_enabled = 1;

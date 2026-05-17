@@ -17,7 +17,7 @@ struct backend_health {
 	int healthy;
 };
 
-static int tcp_check(struct backend_info *be, int timeout_ms)
+static int tcp_check(const struct backend_info *be, int timeout_ms)
 {
 	int fd = socket(AF_INET, SOCK_STREAM | SOCK_NONBLOCK, 0);
 	if (fd < 0)

@@ -55,7 +55,7 @@ struct backend_display {
 	__u64 prev_packets;
 };
 
-static int find_display(struct backend_display *out, int count,
+static int find_display(const struct backend_display *out, int count,
                         const char *addr_str)
 {
 	for (int i = 0; i < count; i++) {
