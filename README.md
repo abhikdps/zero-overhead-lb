@@ -104,6 +104,9 @@ make            # build everything
 make clean      # remove build artifacts
 make test       # run functional tests (requires testbed + LB)
 make bench      # run performance benchmark
+make fmt        # format C source files with clang-format
+make fmt-check  # check formatting without modifying files
+make check      # run static analysis with cppcheck
 make help       # list all targets
 ```
 
@@ -291,6 +294,26 @@ make bench BENCH_DURATION=30
 ```
 
 The benchmark uses `hping3 --flood` to generate TCP SYN traffic, reads per-backend stats from the pinned BPF maps before and after, and reports packets per second, throughput, and per-backend distribution.
+
+#### Sample Results (Lima VM, Ubuntu 24.04, ARM64, SKB mode)
+
+```text
+=== Results ===
+Duration:     10s
+Packets:      3.0M
+PPS:          ~300K
+Throughput:   16.0 MB/s
+
+Per-backend distribution (equal weight):
+  10.0.0.2:80               1,500,123 pkts  (50.0%)
+  10.0.0.3:80               1,499,877 pkts  (50.0%)
+
+Per-backend distribution (weight 3:1):
+  10.0.0.2:80               6,300,000 pkts  (78.7%)
+  10.0.0.3:80               1,700,000 pkts  (21.3%)
+```
+
+These numbers are from **generic/SKB mode** on veth interfaces in a Lima VM, where the kernel allocates `sk_buff` before XDP runs. Native XDP on real NICs (or `virtio_net`) bypasses this entirely and will be significantly faster. Production XDP load balancers achieve millions of PPS on commodity hardware.
 
 ## How It Works
 
